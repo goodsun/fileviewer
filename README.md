@@ -1,2 +1,0 @@
-# fileviewer
-liteweight file viewer

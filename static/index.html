@@ -7,23 +7,30 @@
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: sans-serif; display: flex; height: 100vh; background: #1a1a2e; color: #eee; }
-  #sidebar { width: 340px; min-width: 240px; display: flex; flex-direction: column; border-right: 1px solid #333; }
+  body { font-family: sans-serif; display: flex; height: 100vh; background: #1a1a2e; color: #eee; overflow: hidden; }
+  #sidebar { width: 340px; min-width: 160px; max-width: 70vw; display: flex; flex-direction: column; flex-shrink: 0; }
   #search-box { padding: 10px; background: #16213e; }
   #search { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #444; background: #0f3460; color: #eee; font-size: 14px; }
-  #filter-btns { display: flex; gap: 6px; margin-top: 8px; }
-  .filter-btn { flex: 1; padding: 5px; border: 1px solid #444; border-radius: 4px; background: #0f3460; color: #aaa; cursor: pointer; font-size: 12px; }
+  #filter-btns { display: flex; gap: 4px; margin-top: 8px; }
+  .filter-btn { flex: 1; padding: 4px; border: 1px solid #444; border-radius: 4px; background: #0f3460; color: #aaa; cursor: pointer; font-size: 11px; }
   .filter-btn.active { background: #e94560; color: #fff; border-color: #e94560; }
+  #sort-btns { display: flex; gap: 3px; margin-top: 6px; }
+  .sort-btn { flex: 1; padding: 3px; border: 1px solid #333; border-radius: 3px; background: #0a1628; color: #777; cursor: pointer; font-size: 10px; }
+  .sort-btn.active { background: #1a4a7a; color: #adf; border-color: #3a7abf; }
   #file-list { flex: 1; overflow-y: auto; }
   .file-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #222; font-size: 13px; }
   .file-item:hover { background: #0f3460; }
   .file-item.active { background: #e94560; }
   .file-name { font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .file-dir { font-size: 11px; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-date { font-size: 10px; color: #666; margin-top: 2px; }
   .badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-left: 5px; }
   .badge-md { background: #2d6a4f; color: #95d5b2; }
   .badge-img { background: #7b2d8b; color: #e0aaff; }
-  #main { flex: 1; overflow: auto; padding: 24px; background: #0d1117; }
+  .badge-dup { background: #7a5c00; color: #ffd966; }
+  #divider { width: 5px; background: #222; cursor: col-resize; flex-shrink: 0; transition: background 0.1s; }
+  #divider:hover, #divider.dragging { background: #e94560; }
+  #main { flex: 1; overflow: auto; padding: 24px; background: #0d1117; min-width: 0; }
   #content { max-width: 860px; margin: 0 auto; }
   #content img { max-width: 100%; border-radius: 8px; }
   #md-body { line-height: 1.8; }
@@ -40,6 +47,9 @@
   #filepath { font-size: 12px; color: #666; word-break: break-all; flex: 1; }
   #delete-btn { padding: 5px 14px; background: #c0392b; color: #fff; border: none; border-radius: 5px; cursor: pointer; font-size: 13px; white-space: nowrap; }
   #delete-btn:hover { background: #e74c3c; }
+  #compress-btn { padding: 5px 14px; background: #1a6b3c; color: #fff; border: none; border-radius: 5px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+  #compress-btn:hover { background: #27ae60; }
+  #compress-btn:disabled { background: #333; color: #666; cursor: default; }
   #count { padding: 6px 12px; font-size: 11px; color: #666; background: #111; }
 </style>
 </head>
@@ -52,15 +62,25 @@
       <button class="filter-btn" onclick="setFilter('md',this)">Markdown</button>
       <button class="filter-btn" onclick="setFilter('image',this)">Image</button>
     </div>
+    <div id="sort-btns">
+      <button class="sort-btn active" onclick="setSort('path',this)">パス</button>
+      <button class="sort-btn" onclick="setSort('name',this)">名前</button>
+      <button class="sort-btn" onclick="setSort('mtime',this)">更新日</button>
+      <button class="sort-btn" onclick="setSort('ctime',this)">作成日</button>
+      <button class="sort-btn" onclick="setSort('size',this)">サイズ</button>
+      <button class="sort-btn" onclick="setSort('mime',this)">mime</button>
+    </div>
   </div>
   <div id="count"></div>
   <div id="file-list"></div>
 </div>
+<div id="divider"></div>
 <div id="main">
   <div id="content">
     <div id="placeholder">← ファイルを選んでください</div>
     <div id="filepath-bar">
       <div id="filepath"></div>
+      <button id="compress-btn" onclick="compressFile()" style="display:none">🗜 軽量化</button>
       <button id="delete-btn" onclick="deleteFile()">🗑 削除</button>
     </div>
     <div id="md-body" style="display:none"></div>
@@ -68,7 +88,7 @@
   </div>
 </div>
 <script>
-let allFiles = [], filteredFiles = [], currentFilter = 'all', activeItem = null, currentIdx = -1;
+let allFiles = [], filteredFiles = [], currentFilter = 'all', currentSort = 'path', activeItem = null, currentIdx = -1;
 
 async function init() {
   const res = await fetch('/api/files');
@@ -83,20 +103,64 @@ function setFilter(f, btn) {
   renderList();
 }
 
+function setSort(s, btn) {
+  currentSort = s;
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderList();
+}
+
+function sortFiles(files) {
+  return [...files].sort((a, b) => {
+    if (currentSort === 'name')  return a.name.localeCompare(b.name);
+    if (currentSort === 'mtime') return b.mtime - a.mtime;
+    if (currentSort === 'ctime') return b.ctime - a.ctime;
+    if (currentSort === 'size')  return b.size - a.size;
+    if (currentSort === 'mime')  return a.mime.localeCompare(b.mime);
+    return a.path.localeCompare(b.path);
+  });
+}
+
+function fmtSize(bytes) {
+  if (bytes === 0) return '0B';
+  const u = ['B','KB','MB','GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(i ? 1 : 0) + u[i];
+}
+
+function fmtDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString('ja-JP') + ' ' + d.toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'});
+}
+
 function renderList() {
   const q = document.getElementById('search').value.toLowerCase();
-  filteredFiles = allFiles.filter(f => {
+  const base = allFiles.filter(f => {
     if (currentFilter !== 'all' && f.type !== currentFilter) return false;
     return f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q);
   });
+  filteredFiles = sortFiles(base);
+  // 同一サイズ検出
+  const sizeCount = {};
+  filteredFiles.forEach(f => { if (f.size > 0) sizeCount[f.size] = (sizeCount[f.size] || 0) + 1; });
+  const dupSizes = new Set(Object.keys(sizeCount).filter(s => sizeCount[s] > 1).map(Number));
   document.getElementById('count').textContent = `${filteredFiles.length} files`;
   const list = document.getElementById('file-list');
-  list.innerHTML = filteredFiles.map((f,i) => `
-    <div class="file-item" onclick="openByFilteredIdx(${i})" data-idx="${i}" data-path="${f.path}">
-      <div class="file-name">${f.name}<span class="badge badge-${f.type}">${f.type}</span></div>
+  list.innerHTML = filteredFiles.map((f,i) => {
+    let sub = '';
+    if (currentSort === 'mtime') sub = `<div class="file-date">更新: ${fmtDate(f.mtime)}</div>`;
+    else if (currentSort === 'ctime') sub = `<div class="file-date">作成: ${fmtDate(f.ctime)}</div>`;
+    else if (currentSort === 'size') sub = `<div class="file-date">${fmtSize(f.size)}</div>`;
+    else if (currentSort === 'mime') sub = `<div class="file-date">${f.mime}</div>`;
+    const dupBadge = dupSizes.has(f.size) ? `<span class="badge badge-dup">dup?</span>` : '';
+    return `
+    <div class="file-item" onclick="openByFilteredIdx(${i})" data-idx="${i}">
+      <div class="file-name">${f.name}<span class="badge badge-${f.type}">${f.type}</span>${dupBadge}</div>
       <div class="file-dir">${f.dir}</div>
-    </div>
-  `).join('');
+      ${sub}
+    </div>`;
+  }).join('');
   currentIdx = -1;
 }
 
@@ -117,7 +181,10 @@ async function openFile(idx) {
   document.getElementById('filepath').textContent = f.path;
   document.getElementById('md-body').style.display = 'none';
   document.getElementById('img-view').style.display = 'none';
-
+  const compBtn = document.getElementById('compress-btn');
+  compBtn.style.display = f.type === 'image' ? 'block' : 'none';
+  compBtn.disabled = false;
+  compBtn.textContent = '🗜 軽量化';
   if (f.type === 'image') {
     document.getElementById('img-view').src = `/api/file?path=${encodeURIComponent(f.path)}`;
     document.getElementById('img-view').style.display = 'block';
@@ -126,6 +193,31 @@ async function openFile(idx) {
     const text = await res.text();
     document.getElementById('md-body').innerHTML = marked.parse(text);
     document.getElementById('md-body').style.display = 'block';
+  }
+}
+
+async function compressFile() {
+  const path = document.getElementById('filepath').textContent;
+  if (!path) return;
+  const btn = document.getElementById('compress-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 処理中...';
+  const res = await fetch(`/api/compress?path=${encodeURIComponent(path)}`, { method: 'POST' });
+  const json = await res.json();
+  if (res.ok) {
+    const before = fmtSize(json.before);
+    const after = fmtSize(json.after);
+    const pct = Math.round((1 - json.after / json.before) * 100);
+    btn.textContent = `✅ ${before}→${after} (-${pct}%)`;
+    // allFilesのsizeを更新
+    const f = allFiles.find(f => f.path === path);
+    if (f) f.size = json.after;
+    // 画像リロード
+    const img = document.getElementById('img-view');
+    img.src = `/api/file?path=${encodeURIComponent(path)}&t=${Date.now()}`;
+  } else {
+    btn.textContent = '❌ 失敗';
+    btn.disabled = false;
   }
 }
 
@@ -153,6 +245,32 @@ async function deleteFile() {
   }
 }
 
+// ドラッグ仕切り線
+const divider = document.getElementById('divider');
+const sidebar = document.getElementById('sidebar');
+let dragging = false;
+divider.addEventListener('mousedown', e => {
+  dragging = true;
+  divider.classList.add('dragging');
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+});
+document.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const w = e.clientX;
+  if (w > 160 && w < window.innerWidth * 0.7) {
+    sidebar.style.width = w + 'px';
+  }
+});
+document.addEventListener('mouseup', () => {
+  if (!dragging) return;
+  dragging = false;
+  divider.classList.remove('dragging');
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+});
+
+// キーボード
 document.addEventListener('keydown', e => {
   if (e.target.id === 'search') {
     if (e.key === 'ArrowDown') { e.preventDefault(); moveCursor(1); }
@@ -165,6 +283,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && currentIdx >= 0) openByFilteredIdx(currentIdx);
   if (e.key === '/') { e.preventDefault(); document.getElementById('search').focus(); }
   if (e.key === 'd' && currentIdx >= 0) deleteFile();
+  if (e.key === 'c' && currentIdx >= 0) compressFile();
 });
 
 function moveCursor(dir) {
